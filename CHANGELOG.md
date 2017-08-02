@@ -34,9 +34,8 @@ x.x.x Release notes (yyyy-MM-dd)
   `SyncError.deleteRealmUserInfo()` APIs have been changed. They now return
   `RLMSyncErrorActionToken`s or `SyncError.ActionToken`s instead of closures.
 * The callback which runs when a sync user login succeeds or fails
-  now runs on the main queue by default.
-* A `callbackQueue` parameter has been added to the API
-  `+[RLMSyncUser logInWithCredentials:authServerURL:timeout:onCompletion:]`.
+  now runs on the main queue by default, or can be explicitly specified
+  by a new `callbackQueue` parameter on the `{RLM}SyncUser.logIn(...)` API.
 
 ### Enhancements
 
