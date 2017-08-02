@@ -447,7 +447,7 @@ PermissionChangeCallback RLMWrapPermissionStatusCallback(RLMPermissionStatusBloc
                                        JSON:json
                                     timeout:timeout
                                  completion:^(NSError *error, NSDictionary *dictionary) {
-                                     dispatch_async(dispatch_get_main_queue(), ^{
+                                     dispatch_async(callbackQueue, ^{
                                          handler(error, dictionary);
                                      });
                                  }];
