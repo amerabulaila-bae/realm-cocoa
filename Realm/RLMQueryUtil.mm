@@ -528,6 +528,22 @@ public:
     template <typename A, typename B>
     void add_bool_constraint(NSPredicateOperatorType operatorType, A lhs, B rhs);
 
+    // Used for diacritic-sensitive search.
+    template <typename T>
+    void add_substring_constraint_no_empty_check(NSPredicateOperatorType, bool caseSensitive, Columns<String>, T&&);
+
+    template <typename ConstraintAdder>
+    void add_substring_constraint_no_empty_check(NSPredicateOperatorType, ConstraintAdder&&);
+
+    void add_substring_constraint(NSPredicateOperatorType, NSComparisonPredicateOptions,
+                                  Columns<String>, StringData&&);
+    void add_substring_constraint(NSPredicateOperatorType, NSComparisonPredicateOptions,
+                                  Columns<String>, Columns<String>);
+    template <typename ConstraintAdder>
+    void add_substring_constraint(NSPredicateOperatorType, ConstraintAdder&&, const StringData&);
+    template <typename ConstraintAdder>
+    void add_substring_constraint(NSPredicateOperatorType, ConstraintAdder&&, const Columns<String>&);
+
     template <typename T>
     void add_string_constraint(NSPredicateOperatorType operatorType,
                                NSComparisonPredicateOptions predicateOptions,
@@ -625,6 +641,99 @@ void QueryBuilder::add_bool_constraint(NSPredicateOperatorType operatorType, A l
     }
 }
 
+// Diacritic-sensitive version.
+template <typename T>
+void QueryBuilder::add_substring_constraint_no_empty_check(NSPredicateOperatorType operatorType,
+                                                           bool caseSensitive,
+                                                           Columns<String> column,
+                                                           T&& value) {
+    switch (operatorType) {
+        case NSBeginsWithPredicateOperatorType:
+            m_query.and_query(column.begins_with(value, caseSensitive));
+            break;
+        case NSEndsWithPredicateOperatorType:
+            m_query.and_query(column.ends_with(value, caseSensitive));
+            break;
+        case NSContainsPredicateOperatorType:
+            m_query.and_query(column.contains(value, caseSensitive));
+            break;
+        default:
+            // It is our caller's responsibility to ensure this is not reached.
+            REALM_ASSERT(false);
+    }
+}
+
+// Diacritic-insensitive version.
+template<typename ConstraintAdder>
+void QueryBuilder::add_substring_constraint_no_empty_check(NSPredicateOperatorType operatorType,
+                                                           ConstraintAdder&& add_constraint) {
+    switch (operatorType) {
+        case NSBeginsWithPredicateOperatorType:
+            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive | kCFCompareAnchored>{});
+            break;
+        case NSEndsWithPredicateOperatorType:
+            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive | kCFCompareAnchored | kCFCompareBackwards>{});
+            break;
+        case NSContainsPredicateOperatorType:
+            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive>{});
+            break;
+        default:
+            // It is our caller's responsibility to ensure this is not reached.
+            REALM_ASSERT(false);
+    }
+}
+
+// Diacritic-sensitive version.
+void QueryBuilder::add_substring_constraint(NSPredicateOperatorType operatorType,
+                                            NSComparisonPredicateOptions predicateOptions,
+                                            Columns<String> column,
+                                            StringData&& value) {
+    if (!value.size()) {
+        // Foundation always returns false for substring operations with a RHS of null or "".
+        m_query.and_query(std::unique_ptr<Expression>(new FalseExpression));
+        return;
+    }
+    add_substring_constraint_no_empty_check(operatorType, predicateOptions,
+                                            std::move(column), value);
+}
+
+// Diacritic-sensitive version.
+void QueryBuilder::add_substring_constraint(NSPredicateOperatorType operatorType,
+                                            NSComparisonPredicateOptions predicateOptions,
+                                            Columns<String> column1,
+                                            Columns<String> column2) {
+    // Foundation always returns false for substring operations with a RHS of null or "".
+    // We don't need to concern ourselves with the possiblity of column2 traversing a link list
+    // and producing multiple values per row as such expressions will have been rejected.
+    m_query.group();
+    m_query.and_query(column2 != null() && column2 != "");
+    add_substring_constraint_no_empty_check(operatorType, predicateOptions,
+                                            std::move(column1), std::move(column2));
+    m_query.end_group();
+}
+
+// Diacritic-insensitive version.
+template<typename ConstraintAdder>
+void QueryBuilder::add_substring_constraint(NSPredicateOperatorType operatorType, ConstraintAdder&& add_constraint,
+                                            const StringData& value) {
+    if (!value.size()) {
+        // Foundation always returns false for substring operations with a RHS of null or "".
+        m_query.and_query(std::unique_ptr<Expression>(new FalseExpression));
+        return;
+    }
+    add_substring_constraint_no_empty_check(operatorType, std::forward<ConstraintAdder>(add_constraint));
+}
+
+// Diacritic-insensitive version.
+template<typename ConstraintAdder>
+void QueryBuilder::add_substring_constraint(NSPredicateOperatorType operatorType, ConstraintAdder&& add_constraint,
+                                            const Columns<String>& column2) {
+    m_query.group();
+    m_query.and_query(column2 != null() && column2 != "");
+    add_substring_constraint_no_empty_check(operatorType, std::forward<ConstraintAdder>(add_constraint));
+    m_query.end_group();
+}
+
 template <typename T>
 void QueryBuilder::add_string_constraint(NSPredicateOperatorType operatorType,
                                          NSComparisonPredicateOptions predicateOptions,
@@ -636,13 +745,9 @@ void QueryBuilder::add_string_constraint(NSPredicateOperatorType operatorType,
     if (diacriticSensitive) {
         switch (operatorType) {
             case NSBeginsWithPredicateOperatorType:
-                m_query.and_query(column.begins_with(value, caseSensitive));
-                break;
             case NSEndsWithPredicateOperatorType:
-                m_query.and_query(column.ends_with(value, caseSensitive));
-                break;
             case NSContainsPredicateOperatorType:
-                m_query.and_query(column.contains(value, caseSensitive));
+                add_substring_constraint(operatorType, caseSensitive, std::move(column), std::forward<T>(value));
                 break;
             case NSEqualToPredicateOperatorType:
                 m_query.and_query(column.equal(value, caseSensitive));
@@ -665,11 +770,10 @@ void QueryBuilder::add_string_constraint(NSPredicateOperatorType operatorType,
     auto left = as_subexpr(column);
     auto right = as_subexpr(value);
 
-    auto add_constraint = [&](auto comparator) mutable {
+    auto add_constraint_without_check = [&](auto comparator) mutable {
         using Comparator = decltype(comparator);
         using CompareCS = Compare<typename Comparator::CaseSensitive, StringData>;
         using CompareCI = Compare<typename Comparator::CaseInsensitive, StringData>;
-
         if (caseSensitive) {
             m_query.and_query(make_expression<CompareCS>(std::move(left), std::move(right)));
         }
@@ -678,15 +782,35 @@ void QueryBuilder::add_string_constraint(NSPredicateOperatorType operatorType,
         }
     };
 
+    auto empty_handler = overload(
+                                  [&](const StringData& value) {
+                                      add_substring_constraint(operatorType, add_constraint_without_check, value);
+                                  },
+                                  [&](const Columns<String>& value) {
+                                      add_substring_constraint(operatorType, add_constraint_without_check, value);
+                                  }
+                                  );
+
+    auto add_constraint = [&](auto comparator, bool check_empty=false) mutable {
+        using Comparator = decltype(comparator);
+        using CompareCS = Compare<typename Comparator::CaseSensitive, StringData>;
+        using CompareCI = Compare<typename Comparator::CaseInsensitive, StringData>;
+        if (check_empty) {
+            empty_handler(value);
+        } else {
+            add_constraint_without_check(comparator);
+        }
+    };
+
     switch (operatorType) {
         case NSBeginsWithPredicateOperatorType:
-            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive | kCFCompareAnchored>{});
+            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive | kCFCompareAnchored>{}, true);
             break;
         case NSEndsWithPredicateOperatorType:
-            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive | kCFCompareAnchored | kCFCompareBackwards>{});
+            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive | kCFCompareAnchored | kCFCompareBackwards>{}, true);
             break;
         case NSContainsPredicateOperatorType:
-            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive>{});
+            add_constraint(ContainsSubstring<kCFCompareDiacriticInsensitive>{}, true);
             break;
         case NSNotEqualToPredicateOperatorType:
             m_query.Not();

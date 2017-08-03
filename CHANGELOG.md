@@ -34,6 +34,9 @@ x.x.x Release notes (yyyy-MM-dd)
 * The return types of the `SyncError.clientResetInfo()` and
   `SyncError.deleteRealmUserInfo()` APIs have been changed. They now return
   `RLMSyncErrorActionToken`s or `SyncError.ActionToken`s instead of closures.
+* Fix empty strings and null on the right side of `BEGINSWITH`, `ENDSWITH` and
+  `CONTAINS` operators in predicates to match Foundation's semantics of never
+  matching any strings.
 
 ### Enhancements
 
